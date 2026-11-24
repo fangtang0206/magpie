@@ -1301,6 +1301,14 @@ background watch from starting a gateway after shutdown begins.
 `TestDesktopShutdownDrainsGateway` checks the native callback's ordering
 without starting a desktop in a headless test.
 
+On macOS the LaunchAgent from `magpie daemon install` gives the service
+60 seconds to exit after SIGTERM. This leaves room for the default request
+drain and shutdown cleanup before launchd sends SIGKILL (#7613).
+`daemon.Mend` adds the timeout to existing Magpie-generated plists that have
+no `ExitTimeOut` key. The update takes effect the next time launchd loads
+the agent, such as at the next login or after `magpie daemon restart`.
+See `TestLaunchdPlistExitTimeout` and `TestLaunchdMendsMissingExitTimeout`.
+
 Accepting the handed-over socket is not proof that Claude sessions are
 saved. The successor waits on the predecessor's Unix callback endpoint
 `GET /_magpie/claude-ready` before serving a Claude subscription turn. It

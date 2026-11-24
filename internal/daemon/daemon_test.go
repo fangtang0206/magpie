@@ -334,6 +334,58 @@ func TestLaunchdPlistProcessType(t *testing.T) {
 	}
 }
 
+func TestLaunchdPlistExitTimeout(t *testing.T) {
+	p := plist("/opt/magpie", []string{"serve"}, nil)
+	if want := "<key>ExitTimeOut</key><integer>60</integer>"; !strings.Contains(p, want) {
+		t.Errorf("the plist has no %q", want)
+	}
+}
+
+func TestLaunchdMendsMissingExitTimeout(t *testing.T) {
+	testenv.SetHome(t, t.TempDir())
+	l := launchd{}
+	if err := os.MkdirAll(filepath.Dir(l.file()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const generated = `<?xml version="1.0" encoding="UTF-8"?>
+<!-- Written by magpie daemon install; magpie daemon uninstall removes it. -->
+<plist version="1.0">
+<dict>
+	<key>ProcessType</key><string>Standard</string>
+	<key>EnvironmentVariables</key><dict><key>MAGPIE_DRAIN</key><string>20s</string></dict>
+</dict>
+</plist>
+`
+	const timeout = "<key>ExitTimeOut</key><integer>60</integer>"
+	write(t, l.file(), generated)
+	if !l.mended() {
+		t.Fatal("the old launch agent was not given a shutdown timeout")
+	}
+	got, err := os.ReadFile(l.file())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(got), timeout) != 1 || strings.Replace(string(got), "\t"+timeout+"\n", "", 1) != generated {
+		t.Errorf("mending should add only a shutdown timeout:\n%s", got)
+	}
+	if l.mended() {
+		t.Error("the launch agent was changed again")
+	}
+
+	customized := strings.Replace(generated, "\t<key>ProcessType", "\t<key>ExitTimeOut</key>\n\t<integer>90</integer>\n\t<key>ProcessType", 1)
+	write(t, l.file(), customized)
+	if l.mended() {
+		t.Error("the user's explicit shutdown timeout was changed")
+	}
+	got, err = os.ReadFile(l.file())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != customized {
+		t.Errorf("the customized plist changed:\n%s", got)
+	}
+}
+
 // Windows and Android have no service of this kind: the error points to
 // what they have.
 func TestUnsupported(t *testing.T) {

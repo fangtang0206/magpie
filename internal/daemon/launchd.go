@@ -16,6 +16,12 @@ type launchd struct{}
 // Label is the launch agent's; the tray's at login is com.yetone.magpie.
 const Label = "com.yetone.magpie.serve"
 
+const installComment = "<!-- Written by magpie daemon install; magpie daemon uninstall removes it. -->"
+
+// Leave time for the default SIGTERM drain, saving sessions and stopping
+// probes and plugin hosts before launchd sends SIGKILL (#7613).
+const exitTimeout = "<key>ExitTimeOut</key><integer>60</integer>"
+
 func home() string {
 	h, _ := os.UserHomeDir()
 	return h
@@ -40,7 +46,7 @@ func plist(exe string, args, env []string) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Written by magpie daemon install; magpie daemon uninstall removes it. -->
+` + installComment + `
 <plist version="1.0">
 <dict>
 	<key>Label</key>` + s(Label) + `
@@ -50,6 +56,7 @@ func plist(exe string, args, env []string) string {
 	<key>KeepAlive</key>
 	<dict><key>SuccessfulExit</key><false/></dict>
 	<key>ThrottleInterval</key><integer>5</integer>
+	` + exitTimeout + `
 	` + processType + `
 	<key>StandardOutPath</key>` + s(logFile()) + `
 	<key>StandardErrorPath</key>` + s(logFile()) + `
@@ -144,17 +151,23 @@ const (
 	processType    = "<key>ProcessType</key><string>Standard</string>"
 )
 
-// mended rewrites an agent written before #2961, which ran the gateway as
-// Background, to run it as Standard, and says whether it did. It changes
-// that line alone: the rest is the user's install. launchd takes it up
-// when it next loads the agent: at the next login, or a start or restart.
+// mended updates an older launch agent in place. launchd reads the new
+// settings the next time it loads the agent.
 func (l launchd) mended() bool {
 	b, err := os.ReadFile(l.file())
-	if err != nil || !strings.Contains(string(b), oldProcessType) {
+	if err != nil {
 		return false
 	}
-	if err := private(l.file(), []byte(strings.Replace(string(b), oldProcessType, processType, 1))); err != nil {
-		log.Printf("daemon: can't rewrite %s to run the gateway as Standard: %v", l.file(), err)
+	old := string(b)
+	next := strings.Replace(old, oldProcessType, processType, 1)
+	if strings.Contains(next, installComment) && !strings.Contains(next, "<key>ExitTimeOut</key>") {
+		next = strings.Replace(next, "<dict>", "<dict>\n\t"+exitTimeout, 1)
+	}
+	if next == old {
+		return false
+	}
+	if err := private(l.file(), []byte(next)); err != nil {
+		log.Printf("daemon: can't update launch agent %s: %v", l.file(), err)
 		return false
 	}
 	return true
