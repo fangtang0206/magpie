@@ -163,6 +163,69 @@ func TestProjectKeptOutOfGitByExclude(t *testing.T) {
 	gone(t, filepath.Join(proj, ".gitignore"))
 }
 
+func TestProjectSyncPreservesUserIgnoreFiles(t *testing.T) {
+	_, proj := projectLib(t)
+	for name, text := range map[string]string{
+		".gitignore":                             "build/\r\nmanaged_components/",
+		filepath.Join(".git", "info", "exclude"): "*.swp\n\n",
+	} {
+		file := filepath.Join(proj, name)
+		write(t, file, text)
+		before, err := os.Stat(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok(t)(Sync())
+		if got := read(t, file); got != text {
+			t.Errorf("sync rewrote %s: got %q, want %q", name, got, text)
+		}
+		after, err := os.Stat(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(before, after) {
+			t.Errorf("sync replaced %s", name)
+		}
+	}
+}
+
+func TestProjectSyncRemovesOnlyCompleteIgnoreBlocks(t *testing.T) {
+	_, proj := projectLib(t)
+	ignore := filepath.Join(proj, ".gitignore")
+	exclude := filepath.Join(proj, ".git", "info", "exclude")
+	for _, tc := range []struct{ file, input, want string }{
+		{ignore, "build/\r\n\r\n" + ignoreBegin + "\r\n/.claude/skills/pdf\r\n" + ignoreEnd + "\r\n*.tmp", "build/\r\n*.tmp"},
+		{ignore, "build/\n\n" + ignoreBegin + "\n*.tmp", "build/\n\n" + ignoreBegin + "\n*.tmp"},
+		{exclude, "*.swp\r\n\n\n" + excludeBegin(proj) + "\n/.claude/skills/pdf\n" + ignoreEnd, "*.swp\r\n\n"},
+	} {
+		write(t, tc.file, tc.input)
+		ok(t)(Sync())
+		if got := read(t, tc.file); got != tc.want {
+			t.Errorf("%s: got %q, want %q", filepath.Base(tc.file), got, tc.want)
+		}
+	}
+}
+
+func TestProjectExcludeKeepsUserLineEndingsAfterSkillRemoval(t *testing.T) {
+	_, proj := projectLib(t)
+	file := filepath.Join(proj, ".git", "info", "exclude")
+	const original = "# user entries\r\n*.bak\n*.swp"
+	write(t, file, original)
+	ok(t)(ProjectSkill(proj, "docx", []string{"claude"}))
+	want := original + "\r\n\r\n" + excludeBegin(proj) + "\r\n/.claude/skills/docx\r\n" + ignoreEnd + "\r\n"
+	if got := read(t, file); got != want {
+		t.Fatalf("after adding a skill: got %q, want %q", got, want)
+	}
+	ok(t)(Sync())
+	if got := read(t, file); got != want {
+		t.Errorf("after syncing again: got %q, want %q", got, want)
+	}
+	ok(t)(ProjectSkill(proj, "docx", nil))
+	if got, remaining := read(t, file), original+"\r\n"; got != remaining {
+		t.Errorf("after removing a skill: got %q, want %q", got, remaining)
+	}
+}
+
 // A folder outside git gets no ignore file at all; made a repository
 // later, its entries go into the new info/exclude on the next round.
 func TestProjectOutsideGit(t *testing.T) {

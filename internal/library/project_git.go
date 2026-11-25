@@ -175,20 +175,21 @@ func (p *Project) writeExclude(g gitWhere, entries []string) error {
 		nl = "\r\n"
 	}
 	begin := excludeBegin(p.Dir)
-	rest := stripBlock(strings.ReplaceAll(string(b), "\r\n", "\n"), begin)
-	out := rest
+	out := stripBlock(string(b), begin)
 	if len(entries) > 0 {
 		sort.Strings(entries)
 		if out != "" {
-			out += "\n"
+			if !strings.HasSuffix(out, "\n") {
+				out += nl
+			}
+			out += nl
 		}
-		out += begin + "\n"
+		out += begin + nl
 		for _, e := range slices.Compact(entries) {
-			out += pre + e + "\n"
+			out += pre + e + nl
 		}
-		out += ignoreEnd + "\n"
+		out += ignoreEnd + nl
 	}
-	out = strings.ReplaceAll(out, "\n", nl)
 	if out == string(b) {
 		return nil
 	}
@@ -198,24 +199,40 @@ func (p *Project) writeExclude(g gitWhere, entries []string) error {
 	return edit.WriteAtomic(f, []byte(out))
 }
 
-// stripBlock is s without the lines from begin to ignoreEnd, and the blank
-// line left before them.
+// stripBlock removes complete managed blocks and their separator, keeping
+// the other lines byte for byte, including their line endings.
 func stripBlock(s, begin string) string {
-	var out []string
-	in := false
-	for _, line := range strings.Split(s, "\n") {
-		switch t := strings.TrimSpace(line); {
-		case t == begin:
-			in = true
-		case in && t == ignoreEnd:
-			in = false
-		case !in:
-			out = append(out, line)
+	lines := strings.SplitAfter(s, "\n")
+	var out strings.Builder
+	start := 0
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != begin {
+			continue
 		}
+		end := i + 1
+		for ; end < len(lines); end++ {
+			line := strings.TrimSpace(lines[end])
+			if line == ignoreEnd || strings.HasPrefix(line, "# >>> magpie:") {
+				break
+			}
+		}
+		if end == len(lines) || strings.TrimSpace(lines[end]) != ignoreEnd {
+			continue
+		}
+		stop := i
+		if i > start && (lines[i-1] == "\n" || lines[i-1] == "\r\n") {
+			stop--
+		}
+		for _, line := range lines[start:stop] {
+			out.WriteString(line)
+		}
+		start, i = end+1, end
 	}
-	r := strings.TrimRight(strings.Join(out, "\n"), "\n")
-	if r != "" {
-		r += "\n"
+	if start == 0 {
+		return s
 	}
-	return r
+	for _, line := range lines[start:] {
+		out.WriteString(line)
+	}
+	return out.String()
 }

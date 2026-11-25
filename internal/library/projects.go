@@ -439,11 +439,7 @@ func (p *Project) writeIgnore() error {
 	if err != nil {
 		return err
 	}
-	nl := "\n"
-	if strings.Contains(string(b), "\r\n") {
-		nl = "\r\n"
-	}
-	out := strings.ReplaceAll(stripIgnore(strings.ReplaceAll(string(b), "\r\n", "\n")), "\n", nl)
+	out := stripIgnore(string(b))
 	if out == string(b) {
 		return nil
 	}
